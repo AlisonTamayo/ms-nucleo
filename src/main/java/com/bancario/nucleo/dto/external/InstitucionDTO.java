@@ -40,4 +40,14 @@ public class InstitucionDTO {
     public void setEstadoOperativo(String estadoOperativo) {
         this.estadoOperativo = estadoOperativo;
     }
+
+    private String llavePublica;
+
+    public String getLlavePublica() {
+        return llavePublica;
+    }
+
+    public void setLlavePublica(String llavePublica) {
+        this.llavePublica = llavePublica;
+    }
 }

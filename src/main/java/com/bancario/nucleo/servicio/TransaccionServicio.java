@@ -23,6 +23,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.MediaType;
 
 import com.bancario.nucleo.dto.TransaccionResponseDTO;
 import com.bancario.nucleo.dto.ReturnRequestDTO;
@@ -178,7 +181,14 @@ public class TransaccionServicio {
 
                     try {
                         cb.executeRunnable(() -> {
-                            restTemplate.postForEntity(urlWebhook, iso, String.class);
+                            HttpHeaders headers = new HttpHeaders();
+                            headers.setContentType(MediaType.APPLICATION_JSON);
+                            if (bancoDestinoInfo.getLlavePublica() != null) {
+                                headers.set("apikey", bancoDestinoInfo.getLlavePublica());
+                            }
+
+                            HttpEntity<MensajeISO> request = new HttpEntity<>(iso, headers);
+                            restTemplate.postForEntity(urlWebhook, request, String.class);
                         });
 
                         log.info("Webhook: Entregado exitosamente.");
@@ -232,7 +242,9 @@ public class TransaccionServicio {
                 throw new java.util.concurrent.TimeoutException("No se obtuvo respuesta del Banco Destino");
             }
 
-        } catch (java.util.concurrent.TimeoutException e) {
+        } catch (
+
+        java.util.concurrent.TimeoutException e) {
             log.error("Transacción en estado PENDING por Timeout: {}", e.getMessage());
             throw new org.springframework.web.server.ResponseStatusException(
                     org.springframework.http.HttpStatus.GATEWAY_TIMEOUT, "Tiempo de espera agotado con Banco Destino");
@@ -392,7 +404,14 @@ public class TransaccionServicio {
             InstitucionDTO bancoOrigen = validarBanco(originalTx.getCodigoBicOrigen(), true);
             String urlWebhook = bancoOrigen.getUrlDestino() + "/api/incoming/return";
 
-            restTemplate.postForEntity(urlWebhook, returnRequest, String.class);
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            if (bancoOrigen.getLlavePublica() != null) {
+                headers.set("apikey", bancoOrigen.getLlavePublica());
+            }
+
+            HttpEntity<ReturnRequestDTO> request = new HttpEntity<>(returnRequest, headers);
+            restTemplate.postForEntity(urlWebhook, request, String.class);
             log.info("Notificación enviada al Banco Origen: {}", bancoOrigen.getNombre());
         } catch (Exception e) {
             log.warn("No se pudo notificar al Banco Origen del reverso: {}", e.getMessage());
