@@ -316,6 +316,16 @@ public class TransaccionServicio {
     public Object procesarDevolucion(ReturnRequestDTO returnRequest) {
         String originalId = returnRequest.getBody().getOriginalInstructionId();
 
+        if (originalId == null || originalId.isBlank()) {
+            throw new BusinessException("El campo 'originalInstructionId' es obligatorio.");
+        }
+
+        try {
+            UUID.fromString(originalId);
+        } catch (IllegalArgumentException e) {
+            throw new BusinessException("El 'originalInstructionId' no tiene un formato UUID válido: " + originalId);
+        }
+
         log.info("Procesando solicitud de devolución para instrucción original: {}", originalId);
         String returnId = returnRequest.getHeader().getMessageId();
 
@@ -350,7 +360,7 @@ public class TransaccionServicio {
         try {
             Map<String, Object> reqDev = new java.util.HashMap<>();
             reqDev.put("id", returnUuid);
-            reqDev.put("idInstruccionOriginal", UUID.fromString(originalId));
+            reqDev.put("idInstruccionOriginal", originalId);
             reqDev.put("codigoMotivo", returnRequest.getBody().getReturnReason());
             reqDev.put("estado", "RECEIVED");
 
