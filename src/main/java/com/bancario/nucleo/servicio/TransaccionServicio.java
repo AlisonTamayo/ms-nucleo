@@ -1,4 +1,4 @@
-package com.bancario.nucleo.service;
+package com.bancario.nucleo.servicio;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -6,10 +6,17 @@ import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.UUID;
 import java.util.List;
+import java.util.Map;
+
+import com.bancario.nucleo.repositorio.TransaccionRepositorio;
+import com.bancario.nucleo.repositorio.RespaldoIdempotenciaRepositorio;
+import com.bancario.nucleo.modelo.Transaccion;
+import com.bancario.nucleo.modelo.RespaldoIdempotencia;
+import com.bancario.nucleo.modelo.IsoError;
+import com.bancario.nucleo.mapper.TransaccionMapper;
 
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
@@ -22,11 +29,7 @@ import com.bancario.nucleo.dto.ReturnRequestDTO;
 import com.bancario.nucleo.dto.external.InstitucionDTO;
 import com.bancario.nucleo.dto.external.RegistroMovimientoRequest;
 import com.bancario.nucleo.dto.iso.MensajeISO;
-import com.bancario.nucleo.exception.BusinessException;
-import com.bancario.nucleo.model.RespaldoIdempotencia;
-import com.bancario.nucleo.model.Transaccion;
-import com.bancario.nucleo.repository.RespaldoIdempotenciaRepository;
-import com.bancario.nucleo.repository.TransaccionRepository;
+import com.bancario.nucleo.excepcion.BusinessException;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -34,14 +37,15 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class TransaccionService {
+public class TransaccionServicio {
 
-    @Autowired
-    private StringRedisTemplate redisTemplate;
-    private final TransaccionRepository transaccionRepository;
-    private final RespaldoIdempotenciaRepository idempotenciaRepository;
+    private final StringRedisTemplate redisTemplate;
+    private final TransaccionRepositorio transaccionRepositorio;
+    private final RespaldoIdempotenciaRepositorio idempotenciaRepositorio;
     private final RestTemplate restTemplate;
     private final io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry circuitBreakerRegistry;
+    private final TransaccionMapper transaccionMapper;
+    private final NormalizadorErroresServicio normalizadorErrores;
 
     @Value("${service.directorio.url:http://ms-directorio:8081}")
     private String directorioUrl;
@@ -81,7 +85,7 @@ public class TransaccionService {
             claimed = redisTemplate.opsForValue().setIfAbsent(redisKey, redisValue, java.time.Duration.ofHours(24));
         } catch (Exception e) {
             log.error("Fallo Redis SET: {}. Pasando a Fallback DB.", e.getMessage());
-            boolean existeEnDb = idempotenciaRepository.findByHashContenido("HASH_" + idInstruccion).isPresent();
+            boolean existeEnDb = idempotenciaRepositorio.findByHashContenido("HASH_" + idInstruccion).isPresent();
             claimed = !existeEnDb;
         }
 
@@ -96,12 +100,12 @@ public class TransaccionService {
             }
 
             if (existingVal == null) {
-                return idempotenciaRepository.findByHashContenido("HASH_" + idInstruccion)
+                return idempotenciaRepositorio.findByHashContenido("HASH_" + idInstruccion)
                         .map(respaldo -> {
                             log.warn(
                                     "Duplicado detectado via DB (Redis Offline). Retornando original ISO 20022 para {}",
                                     idInstruccion);
-                            return mapToDTO(respaldo.getTransaccion());
+                            return transaccionMapper.toDTO(respaldo.getTransaccion());
                         })
                         .orElseThrow(() -> new IllegalStateException(
                                 "Inconsistencia: Detectado como duplicado pero no encontrado en DB ni Redis."));
@@ -131,7 +135,7 @@ public class TransaccionService {
         tx.setEstado("RECEIVED");
         tx.setFechaCreacion(LocalDateTime.now(java.time.ZoneOffset.UTC));
 
-        tx = transaccionRepository.save(tx);
+        tx = transaccionRepositorio.save(tx);
 
         try {
             String bin = (cuentaDestino != null && cuentaDestino.length() >= 6) ? cuentaDestino.substring(0, 6)
@@ -189,13 +193,19 @@ public class TransaccionService {
                 } catch (BusinessException e) {
                     throw e;
                 } catch (HttpClientErrorException e) {
-                    log.error("Rechazo 4xx del Banco Destino: {}", e.getStatusCode());
-                    throw new BusinessException("Banco Destino rechazó la transacción: " + e.getStatusCode());
+                    String errorBody = e.getResponseBodyAsString();
+                    String isoCode = normalizadorErrores.normalizarError(errorBody);
+                    log.error("Rechazo Normalizado del Banco Destino: {} -> {}", errorBody, isoCode);
+
+                    throw new BusinessException("Transacción Rechazada (" + isoCode + "): " + errorBody);
 
                 } catch (org.springframework.web.client.HttpServerErrorException e) {
                     log.error("Error 5xx del Banco Destino: {}", e.getStatusCode());
                     reportarFalloAlDirectorio(bicDestino, "HTTP_5XX");
-                    throw new BusinessException("Banco Destino falló internamente (5xx): " + e.getStatusCode());
+
+                    String isoCode = IsoError.MS03.getCodigo();
+                    throw new BusinessException(
+                            "Banco Destino falló internamente (" + isoCode + "): " + e.getStatusCode());
 
                 } catch (org.springframework.web.client.ResourceAccessException e) {
                     log.error("Timeout/Conexión fallida con Banco Destino: {}", e.getMessage());
@@ -217,7 +227,7 @@ public class TransaccionService {
                 log.error("TIMEOUT: Se agotaron los reintentos. Último error: {}", ultimoError);
                 log.error("TIMEOUT: Se agotaron los reintentos. Último error: {}", ultimoError);
                 tx.setEstado("TIMEOUT");
-                transaccionRepository.save(tx);
+                transaccionRepositorio.save(tx);
 
                 throw new java.util.concurrent.TimeoutException("No se obtuvo respuesta del Banco Destino");
             }
@@ -237,12 +247,12 @@ public class TransaccionService {
             tx.setEstado("FAILED");
         }
 
-        Transaccion saved = transaccionRepository.save(tx);
-        return mapToDTO(saved);
+        Transaccion saved = transaccionRepositorio.save(tx);
+        return transaccionMapper.toDTO(saved);
     }
 
     public TransaccionResponseDTO obtenerTransaccion(UUID id) {
-        Transaccion tx = transaccionRepository.findById(id)
+        Transaccion tx = transaccionRepositorio.findById(id)
                 .orElseThrow(() -> new BusinessException("Transacción no encontrada"));
 
         if ("PENDING".equals(tx.getEstado()) || "RECEIVED".equals(tx.getEstado()) || "TIMEOUT".equals(tx.getEstado())) {
@@ -265,7 +275,7 @@ public class TransaccionService {
                             if ("COMPLETED".equals(nuevoEstado) || "FAILED".equals(nuevoEstado)) {
                                 log.info("RF-04: Resolución obtenida. Estado actualizado a {}", nuevoEstado);
                                 tx.setEstado(nuevoEstado);
-                                tx = transaccionRepository.save(tx);
+                                tx = transaccionRepositorio.save(tx);
 
                                 if ("COMPLETED".equals(nuevoEstado)) {
                                     guardarRespaldoIdempotencia(tx, "EXITO (RECUPERADO)");
@@ -278,7 +288,7 @@ public class TransaccionService {
                                 .isBefore(LocalDateTime.now(java.time.ZoneOffset.UTC))) {
                             log.error("RF-04: Tiempo máximo de resolución agotado (60s). Marcando FAILED.");
                             tx.setEstado("FAILED");
-                            tx = transaccionRepository.save(tx);
+                            tx = transaccionRepositorio.save(tx);
                         }
                     }
 
@@ -288,7 +298,7 @@ public class TransaccionService {
             }
         }
 
-        return mapToDTO(tx);
+        return transaccionMapper.toDTO(tx);
     }
 
     public Object procesarDevolucion(ReturnRequestDTO returnRequest) {
@@ -326,10 +336,10 @@ public class TransaccionService {
         }
 
         try {
-            java.util.Map<String, Object> reqDev = new java.util.HashMap<>();
+            Map<String, Object> reqDev = new java.util.HashMap<>();
             reqDev.put("id", returnUuid);
             reqDev.put("idInstruccionOriginal", UUID.fromString(originalId));
-            reqDev.put("codigoMotivo", returnRequest.getBody().getReturnReason()); // ej AC04
+            reqDev.put("codigoMotivo", returnRequest.getBody().getReturnReason());
             reqDev.put("estado", "RECEIVED");
 
             restTemplate.postForEntity(urlDevolucionCreate, reqDev, Object.class);
@@ -364,11 +374,11 @@ public class TransaccionService {
 
         actualizarEstadoDevolucion(returnUuid, estadoFinalDevolucion);
 
-        Transaccion originalTx = transaccionRepository.findById(UUID.fromString(originalId))
+        Transaccion originalTx = transaccionRepositorio.findById(UUID.fromString(originalId))
                 .orElseThrow(() -> new BusinessException("Transacción original no encontrada en Switch"));
 
         originalTx.setEstado("REVERSED");
-        transaccionRepository.save(originalTx);
+        transaccionRepositorio.save(originalTx);
 
         log.info("Compensación: Registrando reverso en ciclo ABIERTO");
         try {
@@ -483,25 +493,13 @@ public class TransaccionService {
         respaldo.setCuerpoRespuesta("{ \"estado\": \"" + resultado + "\" }");
         respaldo.setFechaExpiracion(LocalDateTime.now(java.time.ZoneOffset.UTC).plusDays(1));
         respaldo.setTransaccion(tx);
-        idempotenciaRepository.save(respaldo);
+        idempotenciaRepositorio.save(respaldo);
     }
 
-    private TransaccionResponseDTO mapToDTO(Transaccion tx) {
-        return TransaccionResponseDTO.builder()
-                .idInstruccion(tx.getIdInstruccion())
-                .idMensaje(tx.getIdMensaje())
-                .referenciaRed(tx.getReferenciaRed())
-                .monto(tx.getMonto())
-                .moneda(tx.getMoneda())
-                .codigoBicOrigen(tx.getCodigoBicOrigen())
-                .codigoBicDestino(tx.getCodigoBicDestino())
-                .estado(tx.getEstado())
-                .fechaCreacion(tx.getFechaCreacion())
-                .build();
-    }
-
-    public List<Transaccion> listarUltimasTransacciones() {
-        return transaccionRepository.findAll(PageRequest.of(0, 50, Sort.by("fechaCreacion").descending())).getContent();
+    public List<TransaccionResponseDTO> listarUltimasTransacciones() {
+        List<Transaccion> txs = transaccionRepositorio
+                .findAll(PageRequest.of(0, 50, Sort.by("fechaCreacion").descending())).getContent();
+        return transaccionMapper.toDTOList(txs);
     }
 
     private void reportarFalloAlDirectorio(String bic, String tipoFallo) {
@@ -526,21 +524,22 @@ public class TransaccionService {
         }
     }
 
-    public List<Transaccion> buscarTransacciones(String id, String bic, String estado) {
-        return transaccionRepository.buscarTransacciones(
+    public List<TransaccionResponseDTO> buscarTransacciones(String id, String bic, String estado) {
+        List<Transaccion> txs = transaccionRepositorio.buscarTransacciones(
                 (id != null && !id.isBlank()) ? id : null,
                 (bic != null && !bic.isBlank()) ? bic : null,
                 (estado != null && !estado.isBlank()) ? estado : null);
+        return transaccionMapper.toDTOList(txs);
     }
 
-    public java.util.Map<String, Object> obtenerEstadisticas() {
+    public Map<String, Object> obtenerEstadisticas() {
         LocalDateTime start = LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(24);
 
-        long total = transaccionRepository.countTransaccionesDesde(start);
-        BigDecimal volumen = transaccionRepository.sumMontoExitosoDesde(start);
-        List<Object[]> porEstado = transaccionRepository.countPorEstadoDesde(start);
+        long total = transaccionRepositorio.countTransaccionesDesde(start);
+        BigDecimal volumen = transaccionRepositorio.sumMontoExitosoDesde(start);
+        List<Object[]> porEstado = transaccionRepositorio.countPorEstadoDesde(start);
 
-        java.util.Map<String, Object> stats = new java.util.HashMap<>();
+        Map<String, Object> stats = new java.util.HashMap<>();
         stats.put("totalTransactions24h", total);
         stats.put("totalVolumeExample", volumen != null ? volumen : BigDecimal.ZERO);
 

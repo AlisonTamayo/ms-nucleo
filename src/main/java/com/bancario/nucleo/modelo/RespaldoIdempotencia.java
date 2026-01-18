@@ -1,4 +1,4 @@
-package com.bancario.nucleo.model;
+package com.bancario.nucleo.modelo;
 
 import jakarta.persistence.*;
 import lombok.Getter;

@@ -1,4 +1,4 @@
-package com.bancario.nucleo.exception;
+package com.bancario.nucleo.excepcion;
 
 public class BusinessException extends RuntimeException {
     public BusinessException(String message) {

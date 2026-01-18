@@ -1,7 +1,7 @@
-package com.bancario.nucleo.controller;
+package com.bancario.nucleo.controlador;
 
 import com.bancario.nucleo.dto.ReturnRequestDTO;
-import com.bancario.nucleo.service.TransaccionService;
+import com.bancario.nucleo.servicio.TransaccionServicio;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -10,7 +10,6 @@ import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
-import java.math.BigDecimal;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -18,8 +17,8 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@WebMvcTest(TransaccionController.class)
-public class TransaccionControllerTest {
+@WebMvcTest(TransaccionControlador.class)
+public class TransaccionControladorTest {
 
     @Autowired
     private MockMvc mockMvc;
@@ -28,7 +27,7 @@ public class TransaccionControllerTest {
     private ObjectMapper objectMapper;
 
     @MockBean
-    private TransaccionService transaccionService;
+    private TransaccionServicio transaccionServicio;
 
     @Test
     public void testProcesarDevolucion() throws Exception {
@@ -41,7 +40,7 @@ public class TransaccionControllerTest {
         body.setOriginalInstructionId(UUID.randomUUID().toString());
         dto.setBody(body);
 
-        when(transaccionService.procesarDevolucion(any(ReturnRequestDTO.class))).thenReturn(new Object());
+        when(transaccionServicio.procesarDevolucion(any(ReturnRequestDTO.class))).thenReturn(new Object());
 
         mockMvc.perform(post("/api/v1/transacciones/devoluciones")
                 .contentType(MediaType.APPLICATION_JSON)
