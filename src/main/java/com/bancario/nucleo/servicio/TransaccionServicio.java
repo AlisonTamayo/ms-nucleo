@@ -88,10 +88,13 @@ public class TransaccionServicio {
             claimed = redisTemplate.opsForValue().setIfAbsent(redisKey, redisValue, java.time.Duration.ofHours(24));
         } catch (Exception e) {
             log.error("Fallo Redis SET: {}. Pasando a Fallback DB.", e.getMessage());
-            // Si Redis falla, consultamos DB: Si existe, claimed=FALSE (ya está tomado). Si
-            // no existe, claimed=TRUE.
-            boolean existeEnDb = idempotenciaRepositorio.findByHashContenido("HASH_" + idInstruccion).isPresent();
-            claimed = !existeEnDb;
+            // Si Redis falla, consultamos DB (Backup Idempotencia O Tabla Transaccional)
+            // Esto evita condiciones de carrera si el registro está en proceso (existe en
+            // Tx pero no en Backup aún)
+            boolean existeEnRespaldo = idempotenciaRepositorio.findByHashContenido("HASH_" + idInstruccion).isPresent();
+            boolean existeEnTx = transaccionRepositorio.existsById(idInstruccion);
+
+            claimed = !(existeEnRespaldo || existeEnTx);
         }
 
         if (Boolean.TRUE.equals(claimed)) {
@@ -107,15 +110,25 @@ public class TransaccionServicio {
             }
 
             if (existingVal == null) {
+                // Estrategia de recuperación Híbrida: Backup -> Transacción
                 return idempotenciaRepositorio.findByHashContenido("HASH_" + idInstruccion)
                         .map(respaldo -> {
-                            log.warn(
-                                    "Duplicado detectado via DB (Redis Offline). Retornando original ISO 20022 para {}",
+                            log.warn("Duplicado detectado via DB-Backup (Redis Offline). Retornando original para {}",
                                     idInstruccion);
                             return transaccionMapper.toDTO(respaldo.getTransaccion());
                         })
-                        .orElseThrow(() -> new IllegalStateException(
-                                "Inconsistencia: Detectado como duplicado pero no encontrado en DB ni Redis."));
+                        .orElseGet(() -> {
+                            // Si no está en backup, buscamos la transacción viva (puede estar PROCESSING)
+                            return transaccionRepositorio.findById(idInstruccion)
+                                    .map(txEncurso -> {
+                                        log.warn(
+                                                "Duplicado detectado via DB-Tx (Redis Offline). Transacción en curso o sin respaldo: {}",
+                                                idInstruccion);
+                                        return transaccionMapper.toDTO(txEncurso);
+                                    })
+                                    .orElseThrow(() -> new IllegalStateException(
+                                            "Inconsistencia: Detectado como duplicado pero no encontrado en DB ni Redis."));
+                        });
             } else {
                 String[] parts = existingVal.split("\\|");
                 String storedMd5 = parts[0];
@@ -350,6 +363,22 @@ public class TransaccionServicio {
             UUID.fromString(originalId);
         } catch (IllegalArgumentException e) {
             throw new BusinessException("El 'originalInstructionId' no tiene un formato UUID válido: " + originalId);
+        }
+
+        // RF-03: Control de Idempotencia Base de Datos (Estado)
+        // Antes de cualquier proceso, verificamos si la Tx original YA fue reversada.
+        Transaccion originalTxCheck = transaccionRepositorio.findById(UUID.fromString(originalId))
+                .orElseThrow(() -> new BusinessException("Transacción original no encontrada en Switch"));
+
+        if ("REVERSED".equals(originalTxCheck.getEstado())) {
+            log.warn("RF-03 Idempotencia: Transacción {} ya está REVERSED. Retornando éxito sin reprocesar.",
+                    originalId);
+            // Retornamos una respuesta simulada de éxito para que el banco solicitante
+            // quede satisfecho
+            Map<String, String> response = new java.util.HashMap<>();
+            response.put("status", "ALREADY_REVERSED");
+            response.put("message", "La transacción ya fue reversada previamente.");
+            return response;
         }
 
         log.info("Procesando solicitud de devolución para instrucción original: {}", originalId);
