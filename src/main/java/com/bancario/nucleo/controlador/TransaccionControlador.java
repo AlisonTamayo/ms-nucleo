@@ -4,6 +4,8 @@ import com.bancario.nucleo.dto.TransaccionResponseDTO;
 import com.bancario.nucleo.dto.ReturnRequestDTO;
 import com.bancario.nucleo.servicio.TransaccionServicio;
 import java.util.List;
+import java.util.Map;
+import java.util.HashMap;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -54,6 +56,21 @@ public class TransaccionControlador {
         log.info("Recibida solicitud de devolución: {}",
                 (returnRequest.getHeader() != null ? returnRequest.getHeader().getMessageId() : "SIN_HEADER"));
         Object response = transaccionServicio.procesarDevolucion(returnRequest);
+
+        if (response == null) {
+            Map<String, String> jsonResponse = new HashMap<>();
+            jsonResponse.put("status", "COMPLETED");
+            jsonResponse.put("message", "Devolución procesada exitosamente.");
+            return ResponseEntity.ok(jsonResponse);
+        }
+
+        if (response instanceof String) {
+            Map<String, String> jsonResponse = new HashMap<>();
+            jsonResponse.put("status", "INFO");
+            jsonResponse.put("message", (String) response);
+            return ResponseEntity.ok(jsonResponse);
+        }
+
         return ResponseEntity.ok(response);
     }
 
