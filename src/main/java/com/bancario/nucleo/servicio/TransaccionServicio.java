@@ -88,9 +88,6 @@ public class TransaccionServicio {
             claimed = redisTemplate.opsForValue().setIfAbsent(redisKey, redisValue, java.time.Duration.ofHours(24));
         } catch (Exception e) {
             log.error("Fallo Redis SET: {}. Pasando a Fallback DB.", e.getMessage());
-            // Si Redis falla, consultamos DB (Backup Idempotencia O Tabla Transaccional)
-            // Esto evita condiciones de carrera si el registro está en proceso (existe en
-            // Tx pero no en Backup aún)
             boolean existeEnRespaldo = idempotenciaRepositorio.findByHashContenido("HASH_" + idInstruccion).isPresent();
             boolean existeEnTx = transaccionRepositorio.existsById(idInstruccion);
 
@@ -105,12 +102,9 @@ public class TransaccionServicio {
                 existingVal = redisTemplate.opsForValue().get(redisKey);
             } catch (Exception e) {
                 log.warn("Redis GET falló tras saber que es duplicado. Intentando recuperar detalles de DB...");
-                // Redis murió justo después del SET (o nunca respondió). `existingVal` queda
-                // null y fuerza búsqueda en DB.
             }
 
             if (existingVal == null) {
-                // Estrategia de recuperación Híbrida: Backup -> Transacción
                 return idempotenciaRepositorio.findByHashContenido("HASH_" + idInstruccion)
                         .map(respaldo -> {
                             log.warn("Duplicado detectado via DB-Backup (Redis Offline). Retornando original para {}",
@@ -118,7 +112,6 @@ public class TransaccionServicio {
                             return transaccionMapper.toDTO(respaldo.getTransaccion());
                         })
                         .orElseGet(() -> {
-                            // Si no está en backup, buscamos la transacción viva (puede estar PROCESSING)
                             return transaccionRepositorio.findById(idInstruccion)
                                     .map(txEncurso -> {
                                         log.warn(
@@ -168,7 +161,6 @@ public class TransaccionServicio {
             log.info("Ledger: Debitando {} a {}", monto, bicOrigen);
             registrarMovimientoContable(bicOrigen, idInstruccion, monto, "DEBIT");
 
-            // CAMBIO: No acreditamos al destino todavía. Esperamos confirmación.
             log.info("Clearing: Registrando posición Origen (Débito)");
             notificarCompensacion(bicOrigen, monto, true);
 
@@ -207,7 +199,6 @@ public class TransaccionServicio {
 
                         log.info("Webhook: Entregado exitosamente.");
 
-                        // AHORA SÍ: Acreditamos al destino y registramos compensación
                         log.info("Ledger: Acreditando {} a {}", monto, bicDestino);
                         registrarMovimientoContable(bicDestino, idInstruccion, monto, "CREDIT");
 
@@ -268,17 +259,11 @@ public class TransaccionServicio {
 
         java.util.concurrent.TimeoutException e) {
             log.error("Transacción en estado PENDING por Timeout: {}", e.getMessage());
-            // No hacemos reverso aquí porque el dinero está "retenido" en el Switch
-            // (Debitado Origen, No Acreditado Destino)
-            // El proceso de SONDING (Probe) resolverá esto.
             throw new org.springframework.web.server.ResponseStatusException(
                     org.springframework.http.HttpStatus.GATEWAY_TIMEOUT, "Tiempo de espera agotado con Banco Destino");
 
         } catch (BusinessException e) {
             log.error("Error de Negocio: {}", e.getMessage());
-            // Solo reversamos si NO es un timeout, ya que en Timeout no sabemos si el
-            // dinero llegó.
-            // La excepción de Timeout se maneja arriba.
             ejecutarReversoSaga(tx);
             tx.setEstado("FAILED");
         } catch (Exception e) {
@@ -318,7 +303,6 @@ public class TransaccionServicio {
                                 tx = transaccionRepositorio.save(tx);
 
                                 if ("COMPLETED".equals(nuevoEstado)) {
-                                    // Completar el movimiento contable que quedó pendiente
                                     try {
                                         registrarMovimientoContable(tx.getCodigoBicDestino(), tx.getIdInstruccion(),
                                                 tx.getMonto(), "CREDIT");
@@ -328,7 +312,7 @@ public class TransaccionServicio {
                                     }
                                     guardarRespaldoIdempotencia(tx, "EXITO (RECUPERADO)");
                                 } else if ("FAILED".equals(nuevoEstado)) {
-                                    ejecutarReversoSaga(tx); // Devolver dinero al origen
+                                    ejecutarReversoSaga(tx);
                                 }
                             }
                         }
@@ -339,7 +323,7 @@ public class TransaccionServicio {
                             log.error("RF-04: Tiempo máximo de resolución agotado (60s). Marcando FAILED.");
                             tx.setEstado("FAILED");
                             tx = transaccionRepositorio.save(tx);
-                            ejecutarReversoSaga(tx); // Devolver dinero al origen
+                            ejecutarReversoSaga(tx);
                         }
                     }
 
@@ -365,16 +349,12 @@ public class TransaccionServicio {
             throw new BusinessException("El 'originalInstructionId' no tiene un formato UUID válido: " + originalId);
         }
 
-        // RF-03: Control de Idempotencia Base de Datos (Estado)
-        // Antes de cualquier proceso, verificamos si la Tx original YA fue reversada.
         Transaccion originalTxCheck = transaccionRepositorio.findById(UUID.fromString(originalId))
                 .orElseThrow(() -> new BusinessException("Transacción original no encontrada en Switch"));
 
         if ("REVERSED".equals(originalTxCheck.getEstado())) {
             log.warn("RF-03 Idempotencia: Transacción {} ya está REVERSED. Retornando éxito sin reprocesar.",
                     originalId);
-            // Retornamos una respuesta simulada de éxito para que el banco solicitante
-            // quede satisfecho
             Map<String, String> response = new java.util.HashMap<>();
             response.put("status", "ALREADY_REVERSED");
             response.put("message", "La transacción ya fue reversada previamente.");
@@ -394,9 +374,6 @@ public class TransaccionServicio {
             claimed = redisTemplate.opsForValue().setIfAbsent(redisKey, redisValue, java.time.Duration.ofHours(24));
         } catch (Exception e) {
             log.error("Fallo Redis SET (Return): {}. Fallback a DB.", e.getMessage());
-            // Para returns, si Redis falla, no bloqueamos. Asumimos que NO es duplicado
-            // (Riesgo aceptado para disponibilidad).
-            // Idealmente deberíamos tener tabla de idempotencia para returns también.
             claimed = true;
         }
 
@@ -599,14 +576,8 @@ public class TransaccionServicio {
     private void ejecutarReversoSaga(Transaccion tx) {
         try {
             log.warn("SAGA COMPENSACIÓN: Iniciando reverso local para Tx {}", tx.getIdInstruccion());
-            // 1. Reembolsar al Origen (Crédito)
             registrarMovimientoContable(tx.getCodigoBicOrigen(), tx.getIdInstruccion(), tx.getMonto(), "CREDIT");
-
-            // 2. Ajustar Compensación Origen (Crédito para anular el Débito previo)
             notificarCompensacion(tx.getCodigoBicOrigen(), tx.getMonto(), false);
-
-            // 3. NO TOCAMOS AL DESTINO (Porque en el nuevo flujo, nunca recibió el dinero
-            // si falló)
 
             log.info("SAGA COMPENSACIÓN: Reverso completado exitosamente.");
         } catch (Exception e) {
