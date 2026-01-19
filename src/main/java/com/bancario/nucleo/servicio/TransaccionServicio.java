@@ -460,6 +460,30 @@ public class TransaccionServicio {
             log.warn("No se pudo notificar al Banco Origen del reverso: {}", e.getMessage());
         }
 
+        // --- NUEVO BLOQUE: Notificar al Banco Destino (Quien recibió el dinero
+        // originalmente) ---
+        try {
+            InstitucionDTO bancoDestino = validarBanco(originalTx.getCodigoBicDestino(), true);
+            // Asumimos que el endpoint para recibir avisos de reverso es el mismo o
+            // específico
+            String urlWebhookDestino = bancoDestino.getUrlDestino() + "/api/incoming/return";
+
+            HttpHeaders headersDestino = new HttpHeaders();
+            headersDestino.setContentType(MediaType.APPLICATION_JSON);
+            if (bancoDestino.getLlavePublica() != null) {
+                headersDestino.set("apikey", bancoDestino.getLlavePublica());
+            }
+
+            HttpEntity<ReturnRequestDTO> requestDestino = new HttpEntity<>(returnRequest, headersDestino);
+            restTemplate.postForEntity(urlWebhookDestino, requestDestino, String.class);
+            log.info("Notificación de REVERSO enviada al Banco Destino (Para débito): {}", bancoDestino.getNombre());
+
+        } catch (Exception e) {
+            log.error(
+                    "CRÍTICO: No se pudo notificar al Banco Destino del reverso. Descuadre potencial en saldos clientes: {}",
+                    e.getMessage());
+        }
+
         return responseLedger;
     }
 
