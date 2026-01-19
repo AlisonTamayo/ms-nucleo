@@ -64,6 +64,7 @@ public class TransaccionServicio {
 
     @Transactional
     public TransaccionResponseDTO procesarTransaccionIso(MensajeISO iso) {
+        log.info(">>> ESCUDO ROBUSTO ACTIVADO v2 <<<");
         UUID idInstruccion;
         String bicOrigen, bicDestino, moneda, messageId, creationDateTime, cuentaOrigen, cuentaDestino;
         BigDecimal monto;
@@ -75,7 +76,10 @@ public class TransaccionServicio {
                 throw new BusinessException("El mensaje ISO está mal formado (Header o Body nulos).");
             }
 
-            idInstruccion = UUID.fromString(iso.getBody().getInstructionId());
+            // Lógica de ID Tolerante: Si no es UUID, lo convertimos en uno hash
+            String rawId = iso.getBody().getInstructionId();
+            idInstruccion = parseUuidSeguro(rawId);
+
             bicOrigen = iso.getHeader().getOriginatingBankId();
             bicDestino = iso.getBody().getCreditor().getTargetBankId();
             monto = iso.getBody().getAmount().getValue();
@@ -88,9 +92,6 @@ public class TransaccionServicio {
             String fingerprint = idInstruccion.toString() + monto.toString() + moneda + bicOrigen + bicDestino
                     + creationDateTime + cuentaOrigen + cuentaDestino;
             fingerprintMd5 = generarMD5(fingerprint);
-        } catch (IllegalArgumentException e) {
-            log.error("Error validando formato UUID o datos: {}", e.getMessage());
-            throw new BusinessException("Formato inválido en la solicitud (UUID o Datos): " + e.getMessage());
         } catch (NullPointerException e) {
             log.error("Error: Datos obligatorios faltantes en el mensaje ISO.", e);
             throw new BusinessException("Datos obligatorios faltantes en el mensaje ISO (NPE).");
@@ -702,6 +703,15 @@ public class TransaccionServicio {
             return hex.toString();
         } catch (Exception e) {
             throw new RuntimeException("Error generando MD5", e);
+        }
+    }
+
+    private UUID parseUuidSeguro(String rawId) {
+        try {
+            return UUID.fromString(rawId);
+        } catch (IllegalArgumentException e) {
+            log.warn("ID no estándar recibido ('{}'). Generando UUID compatible.", rawId);
+            return UUID.nameUUIDFromBytes(rawId.getBytes(StandardCharsets.UTF_8));
         }
     }
 
