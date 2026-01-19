@@ -444,9 +444,8 @@ public class TransaccionServicio {
         }
 
         try {
-            // 1. Notificar Banco Origen (Recibe el dinero de vuelta)
             InstitucionDTO bancoOrigen = validarBanco(originalTx.getCodigoBicOrigen(), true);
-            String urlWebhookOrigen = bancoOrigen.getUrlDestino() + "/api/incoming/return";
+            String urlWebhook = bancoOrigen.getUrlDestino() + "/api/incoming/return";
 
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
@@ -454,32 +453,11 @@ public class TransaccionServicio {
                 headers.set("apikey", bancoOrigen.getLlavePublica());
             }
 
-            HttpEntity<ReturnRequestDTO> requestOrigen = new HttpEntity<>(returnRequest, headers);
-            restTemplate.postForEntity(urlWebhookOrigen, requestOrigen, String.class);
-            log.info("Notificación RETURN enviada al Banco Origen (Receptor): {}", bancoOrigen.getNombre());
-
-            // 2. Notificar Banco Destino (Se le debita el dinero)
-            // Solo si NO fue él quien inició el proceso (para evitar bucles, aunque
-            // idempotencia lo maneja)
-            // En este caso, asumimos que siempre notificamos para confirmación.
-            InstitucionDTO bancoDestino = validarBanco(originalTx.getCodigoBicDestino(), true);
-            String urlWebhookDestino = bancoDestino.getUrlDestino() + "/api/incoming/reversal"; // Nuevo endpoint
-                                                                                                // sugerido
-
-            if (bancoDestino.getLlavePublica() != null) {
-                headers.set("apikey", bancoDestino.getLlavePublica());
-            }
-            HttpEntity<ReturnRequestDTO> requestDestino = new HttpEntity<>(returnRequest, headers);
-            try {
-                restTemplate.postForEntity(urlWebhookDestino, requestDestino, String.class);
-                log.info("Notificación REVERSAL enviada al Banco Destino (Debitado): {}", bancoDestino.getNombre());
-            } catch (Exception ex) {
-                log.warn("El Banco Destino {} no tiene endpoint de REVERSAL o falló la notificación: {}",
-                        bancoDestino.getNombre(), ex.getMessage());
-            }
-
+            HttpEntity<ReturnRequestDTO> request = new HttpEntity<>(returnRequest, headers);
+            restTemplate.postForEntity(urlWebhook, request, String.class);
+            log.info("Notificación enviada al Banco Origen: {}", bancoOrigen.getNombre());
         } catch (Exception e) {
-            log.warn("No se pudo completar las notificaciones de Devolución: {}", e.getMessage());
+            log.warn("No se pudo notificar al Banco Origen del reverso: {}", e.getMessage());
         }
 
         return responseLedger;
