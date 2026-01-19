@@ -151,12 +151,9 @@ public class TransaccionServicio {
             log.info("Ledger: Debitando {} a {}", monto, bicOrigen);
             registrarMovimientoContable(bicOrigen, idInstruccion, monto, "DEBIT");
 
-            log.info("Ledger: Acreditando {} a {}", monto, bicDestino);
-            registrarMovimientoContable(bicDestino, idInstruccion, monto, "CREDIT");
-
-            log.info("Clearing: Registrando posiciones en Ciclo ABIERTO (Auto)");
+            // CAMBIO: No acreditamos al destino todavía. Esperamos confirmación.
+            log.info("Clearing: Registrando posición Origen (Débito)");
             notificarCompensacion(bicOrigen, monto, true);
-            notificarCompensacion(bicDestino, monto, false);
 
             int[] tiemposEspera = { 0, 800, 2000, 4000 };
             boolean entregado = false;
@@ -192,6 +189,14 @@ public class TransaccionServicio {
                         });
 
                         log.info("Webhook: Entregado exitosamente.");
+
+                        // AHORA SÍ: Acreditamos al destino y registramos compensación
+                        log.info("Ledger: Acreditando {} a {}", monto, bicDestino);
+                        registrarMovimientoContable(bicDestino, idInstruccion, monto, "CREDIT");
+
+                        log.info("Clearing: Registrando posición Destino (Crédito)");
+                        notificarCompensacion(bicDestino, monto, false);
+
                         entregado = true;
                         break;
 
@@ -246,6 +251,9 @@ public class TransaccionServicio {
 
         java.util.concurrent.TimeoutException e) {
             log.error("Transacción en estado PENDING por Timeout: {}", e.getMessage());
+            // No hacemos reverso aquí porque el dinero está "retenido" en el Switch
+            // (Debitado Origen, No Acreditado Destino)
+            // El proceso de SONDING (Probe) resolverá esto.
             throw new org.springframework.web.server.ResponseStatusException(
                     org.springframework.http.HttpStatus.GATEWAY_TIMEOUT, "Tiempo de espera agotado con Banco Destino");
 
@@ -290,7 +298,17 @@ public class TransaccionServicio {
                                 tx = transaccionRepositorio.save(tx);
 
                                 if ("COMPLETED".equals(nuevoEstado)) {
+                                    // Completar el movimiento contable que quedó pendiente
+                                    try {
+                                        registrarMovimientoContable(tx.getCodigoBicDestino(), tx.getIdInstruccion(),
+                                                tx.getMonto(), "CREDIT");
+                                        notificarCompensacion(tx.getCodigoBicDestino(), tx.getMonto(), false);
+                                    } catch (Exception ex) {
+                                        log.error("Error aplicando contabilidad en Recuperación: {}", ex.getMessage());
+                                    }
                                     guardarRespaldoIdempotencia(tx, "EXITO (RECUPERADO)");
+                                } else if ("FAILED".equals(nuevoEstado)) {
+                                    ejecutarReversoSaga(tx); // Devolver dinero al origen
                                 }
                             }
                         }
@@ -301,6 +319,7 @@ public class TransaccionServicio {
                             log.error("RF-04: Tiempo máximo de resolución agotado (60s). Marcando FAILED.");
                             tx.setEstado("FAILED");
                             tx = transaccionRepositorio.save(tx);
+                            ejecutarReversoSaga(tx); // Devolver dinero al origen
                         }
                     }
 
@@ -543,10 +562,15 @@ public class TransaccionServicio {
     private void ejecutarReversoSaga(Transaccion tx) {
         try {
             log.warn("SAGA COMPENSACIÓN: Iniciando reverso local para Tx {}", tx.getIdInstruccion());
+            // 1. Reembolsar al Origen (Crédito)
             registrarMovimientoContable(tx.getCodigoBicOrigen(), tx.getIdInstruccion(), tx.getMonto(), "CREDIT");
-            registrarMovimientoContable(tx.getCodigoBicDestino(), tx.getIdInstruccion(), tx.getMonto(), "DEBIT");
+
+            // 2. Ajustar Compensación Origen (Crédito para anular el Débito previo)
             notificarCompensacion(tx.getCodigoBicOrigen(), tx.getMonto(), false);
-            notificarCompensacion(tx.getCodigoBicDestino(), tx.getMonto(), true);
+
+            // 3. NO TOCAMOS AL DESTINO (Porque en el nuevo flujo, nunca recibió el dinero
+            // si falló)
+
             log.info("SAGA COMPENSACIÓN: Reverso completado exitosamente.");
         } catch (Exception e) {
             log.error("CRITICAL: Fallo en Saga de Reverso. Inconsistencia Contable posible. {}", e.getMessage());
