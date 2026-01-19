@@ -69,6 +69,7 @@ public class TransaccionServicio {
         String bicOrigen, bicDestino, moneda, messageId, creationDateTime, cuentaOrigen, cuentaDestino;
         BigDecimal monto;
         String fingerprintMd5;
+        boolean debitRealizado = false;
 
         try {
             if (iso.getBody() == null || iso.getHeader() == null) {
@@ -180,6 +181,7 @@ public class TransaccionServicio {
 
             log.info("Ledger: Debitando {} a {}", monto, bicOrigen);
             registrarMovimientoContable(bicOrigen, idInstruccion, monto, "DEBIT");
+            debitRealizado = true;
 
             log.info("Clearing: Registrando posición Origen (Débito)");
             notificarCompensacion(bicOrigen, monto, true);
@@ -284,11 +286,15 @@ public class TransaccionServicio {
 
         } catch (BusinessException e) {
             log.error("Error de Negocio: {}", e.getMessage());
-            ejecutarReversoSaga(tx);
+            if (debitRealizado) {
+                ejecutarReversoSaga(tx);
+            }
             tx.setEstado("FAILED");
         } catch (Exception e) {
             log.error("Error crítico en Tx: {}", e.getMessage());
-            ejecutarReversoSaga(tx);
+            if (debitRealizado) {
+                ejecutarReversoSaga(tx);
+            }
             tx.setEstado("FAILED");
         }
 
