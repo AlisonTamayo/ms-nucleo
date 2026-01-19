@@ -64,19 +64,40 @@ public class TransaccionServicio {
 
     @Transactional
     public TransaccionResponseDTO procesarTransaccionIso(MensajeISO iso) {
-        UUID idInstruccion = UUID.fromString(iso.getBody().getInstructionId());
-        String bicOrigen = iso.getHeader().getOriginatingBankId();
-        String bicDestino = iso.getBody().getCreditor().getTargetBankId();
-        BigDecimal monto = iso.getBody().getAmount().getValue();
-        String moneda = iso.getBody().getAmount().getCurrency();
-        String messageId = iso.getHeader().getMessageId();
-        String creationDateTime = iso.getHeader().getCreationDateTime();
-        String cuentaOrigen = iso.getBody().getDebtor().getAccountId();
-        String cuentaDestino = iso.getBody().getCreditor().getAccountId();
+        UUID idInstruccion;
+        String bicOrigen, bicDestino, moneda, messageId, creationDateTime, cuentaOrigen, cuentaDestino;
+        BigDecimal monto;
+        String fingerprintMd5;
 
-        String fingerprint = idInstruccion.toString() + monto.toString() + moneda + bicOrigen + bicDestino
-                + creationDateTime + cuentaOrigen + cuentaDestino;
-        String fingerprintMd5 = generarMD5(fingerprint);
+        try {
+            // Validación defensiva de entrada
+            if (iso.getBody() == null || iso.getHeader() == null) {
+                throw new BusinessException("El mensaje ISO está mal formado (Header o Body nulos).");
+            }
+
+            idInstruccion = UUID.fromString(iso.getBody().getInstructionId());
+            bicOrigen = iso.getHeader().getOriginatingBankId();
+            bicDestino = iso.getBody().getCreditor().getTargetBankId();
+            monto = iso.getBody().getAmount().getValue();
+            moneda = iso.getBody().getAmount().getCurrency();
+            messageId = iso.getHeader().getMessageId();
+            creationDateTime = iso.getHeader().getCreationDateTime();
+            cuentaOrigen = iso.getBody().getDebtor().getAccountId();
+            cuentaDestino = iso.getBody().getCreditor().getAccountId();
+
+            String fingerprint = idInstruccion.toString() + monto.toString() + moneda + bicOrigen + bicDestino
+                    + creationDateTime + cuentaOrigen + cuentaDestino;
+            fingerprintMd5 = generarMD5(fingerprint);
+        } catch (IllegalArgumentException e) {
+            log.error("Error validando formato UUID o datos: {}", e.getMessage());
+            throw new BusinessException("Formato inválido en la solicitud (UUID o Datos): " + e.getMessage());
+        } catch (NullPointerException e) {
+            log.error("Error: Datos obligatorios faltantes en el mensaje ISO.", e);
+            throw new BusinessException("Datos obligatorios faltantes en el mensaje ISO (NPE).");
+        } catch (Exception e) {
+            log.error("Error inesperado procesando datos iniciales ISO: {}", e.getMessage());
+            throw new BusinessException("Error leyendo datos del mensaje: " + e.getMessage());
+        }
 
         log.info(">>> Iniciando Tx ISO: InstID={} MsgID={} Monto={}", idInstruccion, messageId, monto);
 
@@ -446,7 +467,6 @@ public class TransaccionServicio {
         try {
             InstitucionDTO bancoOrigen = validarBanco(originalTx.getCodigoBicOrigen(), true);
             String urlWebhook = bancoOrigen.getUrlDestino();
-            // Soporte para Webhook Unificado (ArcBank)
             if (!urlWebhook.endsWith("/recepcion")) {
                 urlWebhook += "/api/incoming/return";
             }
