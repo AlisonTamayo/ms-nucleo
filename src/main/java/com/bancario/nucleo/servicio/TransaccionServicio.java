@@ -263,6 +263,9 @@ public class TransaccionServicio {
 
         } catch (BusinessException e) {
             log.error("Error de Negocio: {}", e.getMessage());
+            // Solo reversamos si NO es un timeout, ya que en Timeout no sabemos si el
+            // dinero llegó.
+            // La excepción de Timeout se maneja arriba.
             ejecutarReversoSaga(tx);
             tx.setEstado("FAILED");
         } catch (Exception e) {
