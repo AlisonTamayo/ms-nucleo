@@ -445,7 +445,11 @@ public class TransaccionServicio {
 
         try {
             InstitucionDTO bancoOrigen = validarBanco(originalTx.getCodigoBicOrigen(), true);
-            String urlWebhook = bancoOrigen.getUrlDestino() + "/api/incoming/return";
+            String urlWebhook = bancoOrigen.getUrlDestino();
+            // Soporte para Webhook Unificado (ArcBank)
+            if (!urlWebhook.endsWith("/recepcion")) {
+                urlWebhook += "/api/incoming/return";
+            }
 
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
@@ -466,7 +470,11 @@ public class TransaccionServicio {
             InstitucionDTO bancoDestino = validarBanco(originalTx.getCodigoBicDestino(), true);
             // Asumimos que el endpoint para recibir avisos de reverso es el mismo o
             // específico
-            String urlWebhookDestino = bancoDestino.getUrlDestino() + "/api/incoming/return";
+            String urlWebhookDestino = bancoDestino.getUrlDestino();
+            // Soporte para Webhook Unificado (ArcBank)
+            if (!urlWebhookDestino.endsWith("/recepcion")) {
+                urlWebhookDestino += "/api/incoming/return";
+            }
 
             HttpHeaders headersDestino = new HttpHeaders();
             headersDestino.setContentType(MediaType.APPLICATION_JSON);
