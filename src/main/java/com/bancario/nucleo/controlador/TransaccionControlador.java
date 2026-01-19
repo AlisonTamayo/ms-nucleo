@@ -51,7 +51,8 @@ public class TransaccionControlador {
     @PostMapping("/devoluciones")
     @Operation(summary = "Procesar devolución (pacs.004)", description = "Pass-through para el procesamiento de devoluciones en Contabilidad")
     public ResponseEntity<?> procesarDevolucion(@RequestBody ReturnRequestDTO returnRequest) {
-        log.info("Recibida solicitud de devolución: {}", returnRequest.getHeader().getMessageId());
+        log.info("Recibida solicitud de devolución: {}",
+                (returnRequest.getHeader() != null ? returnRequest.getHeader().getMessageId() : "SIN_HEADER"));
         Object response = transaccionServicio.procesarDevolucion(returnRequest);
         return ResponseEntity.ok(response);
     }
