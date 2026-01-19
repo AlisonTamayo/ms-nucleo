@@ -71,12 +71,10 @@ public class TransaccionServicio {
         String fingerprintMd5;
 
         try {
-            // Validación defensiva de entrada
             if (iso.getBody() == null || iso.getHeader() == null) {
                 throw new BusinessException("El mensaje ISO está mal formado (Header o Body nulos).");
             }
 
-            // Lógica de ID Tolerante: Si no es UUID, lo convertimos en uno hash
             String rawId = iso.getBody().getInstructionId();
             idInstruccion = parseUuidSeguro(rawId);
 
@@ -485,14 +483,9 @@ public class TransaccionServicio {
             log.warn("No se pudo notificar al Banco Origen del reverso: {}", e.getMessage());
         }
 
-        // --- NUEVO BLOQUE: Notificar al Banco Destino (Quien recibió el dinero
-        // originalmente) ---
         try {
             InstitucionDTO bancoDestino = validarBanco(originalTx.getCodigoBicDestino(), true);
-            // Asumimos que el endpoint para recibir avisos de reverso es el mismo o
-            // específico
             String urlWebhookDestino = bancoDestino.getUrlDestino();
-            // Soporte para Webhook Unificado (ArcBank)
             if (!urlWebhookDestino.endsWith("/recepcion")) {
                 urlWebhookDestino += "/api/incoming/return";
             }
