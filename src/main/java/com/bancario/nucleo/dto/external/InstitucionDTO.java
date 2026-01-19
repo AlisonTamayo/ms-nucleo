@@ -1,8 +1,10 @@
 package com.bancario.nucleo.dto.external;
 
 import lombok.Data;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 
 @Data
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class InstitucionDTO {
     private String codigoBic;
     private String nombre;
