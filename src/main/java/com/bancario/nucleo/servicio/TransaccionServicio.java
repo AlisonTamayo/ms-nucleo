@@ -88,6 +88,8 @@ public class TransaccionServicio {
             claimed = redisTemplate.opsForValue().setIfAbsent(redisKey, redisValue, java.time.Duration.ofHours(24));
         } catch (Exception e) {
             log.error("Fallo Redis SET: {}. Pasando a Fallback DB.", e.getMessage());
+            // Si Redis falla, consultamos DB: Si existe, claimed=FALSE (ya está tomado). Si
+            // no existe, claimed=TRUE.
             boolean existeEnDb = idempotenciaRepositorio.findByHashContenido("HASH_" + idInstruccion).isPresent();
             claimed = !existeEnDb;
         }
@@ -100,6 +102,8 @@ public class TransaccionServicio {
                 existingVal = redisTemplate.opsForValue().get(redisKey);
             } catch (Exception e) {
                 log.warn("Redis GET falló tras saber que es duplicado. Intentando recuperar detalles de DB...");
+                // Redis murió justo después del SET (o nunca respondió). `existingVal` queda
+                // null y fuerza búsqueda en DB.
             }
 
             if (existingVal == null) {
@@ -357,9 +361,10 @@ public class TransaccionServicio {
         try {
             claimed = redisTemplate.opsForValue().setIfAbsent(redisKey, redisValue, java.time.Duration.ofHours(24));
         } catch (Exception e) {
-            log.error(
-                    "Fallo Redis SET (Return): {}. Asumiendo nuevo por seguridad (o fallback DB si existiera tabla de returns).",
-                    e.getMessage());
+            log.error("Fallo Redis SET (Return): {}. Fallback a DB.", e.getMessage());
+            // Para returns, si Redis falla, no bloqueamos. Asumimos que NO es duplicado
+            // (Riesgo aceptado para disponibilidad).
+            // Idealmente deberíamos tener tabla de idempotencia para returns también.
             claimed = true;
         }
 
