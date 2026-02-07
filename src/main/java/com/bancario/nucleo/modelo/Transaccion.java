@@ -67,11 +67,25 @@ public class Transaccion {
     @Column(name = "fechaCompletado")
     private LocalDateTime fechaCompletado;
 
+    // Código de referencia bancario de 6 dígitos para devoluciones
+    @Column(name = "codigoReferencia", length = 6, unique = true)
+    private String codigoReferencia;
+
     public Transaccion() {
     }
 
     public Transaccion(UUID idInstruccion) {
         this.idInstruccion = idInstruccion;
+    }
+
+    /**
+     * Genera un código de referencia bancario de 6 dígitos numéricos.
+     * Ejemplo: "847293"
+     */
+    public static String generarCodigoReferencia() {
+        java.security.SecureRandom random = new java.security.SecureRandom();
+        int numero = 100000 + random.nextInt(900000); // Rango: 100000-999999
+        return String.valueOf(numero);
     }
 
     @Override
