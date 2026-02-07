@@ -853,6 +853,22 @@ public class TransaccionServicio {
         }
     }
 
+    /**
+     * Método deprecado - se mantiene para compatibilidad.
+     * El sistema ahora usa registrarOperacionCompensacion() para el flujo DNS.
+     */
+    @Deprecated
+    private void notificarCompensacion(String bic, BigDecimal monto, boolean esDebito) {
+        try {
+            String url = compensacionUrl + "/api/v1/compensacion/acumular?bic=" + bic
+                    + "&monto=" + monto + "&esDebito=" + esDebito;
+            restTemplate.postForEntity(url, null, Void.class);
+            log.info("Compensación notificada: BIC={} Monto={} Debito={}", bic, monto, esDebito);
+        } catch (Exception e) {
+            log.warn("Error notificando compensación (no bloqueante): {}", e.getMessage());
+        }
+    }
+
     private String generarMD5(String input) {
         try {
             MessageDigest md = MessageDigest.getInstance("MD5");

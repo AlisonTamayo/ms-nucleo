@@ -42,6 +42,31 @@ public class Transaccion {
     @Column(name = "fechaCreacion")
     private LocalDateTime fechaCreacion;
 
+    // Campos agregados para cumplir con especificación DNS
+    @Column(name = "cuentaOrigen", length = 34)
+    private String cuentaOrigen;
+
+    @Column(name = "cuentaDestino", length = 34)
+    private String cuentaDestino;
+
+    @Column(name = "idBeneficiario", length = 20)
+    private String idBeneficiario;
+
+    @Column(name = "reintentos")
+    private Integer reintentos = 0;
+
+    @Column(name = "codigoError", length = 10)
+    private String codigoError;
+
+    @Column(name = "idCicloCompensacion")
+    private Integer idCicloCompensacion;
+
+    @Column(name = "fechaEncolado")
+    private LocalDateTime fechaEncolado;
+
+    @Column(name = "fechaCompletado")
+    private LocalDateTime fechaCompletado;
+
     public Transaccion() {
     }
 
