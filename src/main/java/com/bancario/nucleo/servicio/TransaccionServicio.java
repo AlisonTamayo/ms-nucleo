@@ -71,6 +71,7 @@ public class TransaccionServicio {
         BigDecimal monto;
         String fingerprintMd5;
         boolean debitRealizado = false;
+        boolean entregado = false;
 
         try {
             if (iso.getBody() == null || iso.getHeader() == null) {
@@ -236,11 +237,6 @@ public class TransaccionServicio {
             tx.setEstado("COMPLETED");
             guardarRespaldoIdempotencia(tx, "EXITO (ENVIADO A COLA)");
             log.info("Tx UUID={} completada localmente y encolada para {}", idInstruccion, bicDestino);
-
-        } catch (java.util.concurrent.TimeoutException e) {
-            log.error("Transacción en estado PENDING por Timeout: {}", e.getMessage());
-            throw new org.springframework.web.server.ResponseStatusException(
-                    org.springframework.http.HttpStatus.GATEWAY_TIMEOUT, "Tiempo de espera agotado con Banco Destino");
 
         } catch (BusinessException e) {
             log.error("Error de Negocio: {}", e.getMessage());
@@ -839,6 +835,33 @@ public class TransaccionServicio {
             log.warn("ID no estándar recibido ('{}'). Generando UUID compatible.", rawId);
             return UUID.nameUUIDFromBytes(rawId.getBytes(StandardCharsets.UTF_8));
         }
+    }
+
+    public com.bancario.nucleo.dto.AccountLookupResponseDTO validarCuentaDestino(
+            com.bancario.nucleo.dto.AccountLookupRequestDTO request) {
+        log.info("Iniciando validación de cuenta (Account Lookup) para Banco: {}", request.getBody().getTargetBankId());
+
+        String targetBank = request.getBody().getTargetBankId();
+        // String account = request.getBody().getTargetAccountNumber(); // Variable
+        // local no usada si solo validamos banco por ahora
+
+        // 1. Validar que el banco existe
+        InstitucionDTO bancoDestino = validarBanco(targetBank, false);
+
+        // 2. Construir respuesta
+        com.bancario.nucleo.dto.AccountLookupResponseDTO response = new com.bancario.nucleo.dto.AccountLookupResponseDTO();
+        response.setStatus("SUCCESS");
+
+        com.bancario.nucleo.dto.AccountLookupResponseDTO.LookupData data = new com.bancario.nucleo.dto.AccountLookupResponseDTO.LookupData();
+        data.setExists(true);
+        data.setOwnerName("Usuario Validado (Switch)");
+        data.setCurrency("USD");
+        data.setStatus("ACTC"); // Account Connected
+        data.setMensaje("Validación exitosa en " + bancoDestino.getNombre());
+        data.setAccountName("Usuario Validado");
+
+        response.setData(data);
+        return response;
     }
 
 }

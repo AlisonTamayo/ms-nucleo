@@ -7,6 +7,8 @@ import java.util.UUID;
 
 @Data
 @Builder
+@lombok.NoArgsConstructor
+@lombok.AllArgsConstructor
 public class RegistroOperacionDTO {
     private UUID idInstruccion;
     private UUID idInstruccionOriginal; // Opcional, para reversos
