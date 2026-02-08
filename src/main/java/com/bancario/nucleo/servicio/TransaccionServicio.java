@@ -178,6 +178,7 @@ public class TransaccionServicio {
         tx.setMoneda(moneda);
         tx.setCodigoBicOrigen(bicOrigen);
         tx.setCodigoBicDestino(bicDestino);
+        tx.setCodigoReferencia(Transaccion.generarCodigoReferencia()); // Generar código numérico 6 dígitos
         tx.setEstado("RECEIVED");
         tx.setFechaCreacion(LocalDateTime.now(java.time.ZoneOffset.UTC));
 
@@ -237,7 +238,8 @@ public class TransaccionServicio {
                         // NO MORE DIRECT CREDIT TO DESTINATION (Deferred)
 
                         log.info("Clearing: Registrando operación PAGO en ciclo abierto");
-                        registrarOperacionCompensacion(bicOrigen, bicDestino, idInstruccion, monto, "PAGO");
+                        registrarOperacionCompensacion(bicOrigen, bicDestino, idInstruccion, monto, "PAGO",
+                                tx.getCodigoReferencia());
 
                         entregado = true;
                         log.info("Entrega: CONFIRMADA al Banco Destino. Finalizando Tx.");
@@ -684,7 +686,7 @@ public class TransaccionServicio {
     }
 
     private void registrarOperacionCompensacion(String bicEmisor, String bicReceptor, UUID idTx, BigDecimal monto,
-            String tipo) {
+            String tipo, String codigoReferencia) {
         try {
             com.bancario.nucleo.dto.external.RegistroOperacionDTO req = com.bancario.nucleo.dto.external.RegistroOperacionDTO
                     .builder()
@@ -693,6 +695,7 @@ public class TransaccionServicio {
                     .bicReceptor(bicReceptor)
                     .monto(monto)
                     .tipoOperacion(tipo)
+                    .codigoReferencia(codigoReferencia)
                     .build();
 
             String url = compensacionUrl + "/api/v1/compensacion/operaciones";
@@ -735,12 +738,12 @@ public class TransaccionServicio {
             // 1. Register PAGO (So 'Total Debits' includes this, releasing the block in
             // closing)
             registrarOperacionCompensacion(tx.getCodigoBicOrigen(), tx.getCodigoBicDestino(), tx.getIdInstruccion(),
-                    tx.getMonto(), "PAGO");
+                    tx.getMonto(), "PAGO", tx.getCodigoReferencia());
 
             // 2. Register REVERSO (So Net Position cancels out, refunding the user in
             // 'Available')
             registrarOperacionCompensacion(tx.getCodigoBicOrigen(), tx.getCodigoBicDestino(), tx.getIdInstruccion(),
-                    tx.getMonto(), "REVERSO");
+                    tx.getMonto(), "REVERSO", tx.getCodigoReferencia());
 
             // No need to manually CREDIT ledger. Cycle Closing handles it.
 
