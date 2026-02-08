@@ -68,7 +68,7 @@ public class Transaccion {
     private LocalDateTime fechaCompletado;
 
     // Código de referencia bancario de 6 dígitos para devoluciones
-    @Column(name = "codigoReferencia", length = 6, unique = true)
+    @Column(name = "codigo_referencia", length = 6, unique = true)
     private String codigoReferencia;
 
     public Transaccion() {

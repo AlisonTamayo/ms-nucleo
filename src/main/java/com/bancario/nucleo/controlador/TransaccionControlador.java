@@ -46,6 +46,10 @@ public class TransaccionControlador {
         if ("TIMEOUT".equals(response.getEstado())) {
             return new ResponseEntity<>(response, HttpStatus.GATEWAY_TIMEOUT);
         }
+        if ("QUEUED".equals(response.getEstado())) {
+            log.info("Transacción {} encolada. Retornando HTTP 202 Accepted", response.getIdInstruccion());
+            return new ResponseEntity<>(response, HttpStatus.ACCEPTED);
+        }
 
         return new ResponseEntity<>(response, HttpStatus.CREATED);
     }

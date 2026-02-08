@@ -23,4 +23,5 @@ public class TransaccionResponseDTO {
     private String codigoBicDestino;
     private String estado;
     private LocalDateTime fechaCreacion;
+    private String codigoReferencia;
 }

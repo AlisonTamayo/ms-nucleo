@@ -49,6 +49,7 @@ public class TransaccionServicio {
     private final io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry circuitBreakerRegistry;
     private final TransaccionMapper transaccionMapper;
     private final NormalizadorErroresServicio normalizadorErrores;
+    private final MensajeriaServicio mensajeriaServicio;
 
     @Value("${service.directorio.url:http://ms-directorio:8081}")
     private String directorioUrl;
@@ -179,6 +180,14 @@ public class TransaccionServicio {
         tx.setCodigoBicOrigen(bicOrigen);
         tx.setCodigoBicDestino(bicDestino);
         tx.setCodigoReferencia(Transaccion.generarCodigoReferencia()); // Generar código numérico 6 dígitos
+
+        // Inyectar código en ISO para el Banco Destino
+        String currentRemit = iso.getBody().getRemittanceInformation();
+        String newRemit = (currentRemit != null ? currentRemit + " " : "") + "REF:" + tx.getCodigoReferencia();
+        if (newRemit.length() > 140)
+            newRemit = newRemit.substring(0, 140); // Standard ISO limit safety
+        iso.getBody().setRemittanceInformation(newRemit);
+
         tx.setEstado("RECEIVED");
         tx.setFechaCreacion(LocalDateTime.now(java.time.ZoneOffset.UTC));
 
@@ -200,97 +209,33 @@ public class TransaccionServicio {
             reservarBalance(bicOrigen, idInstruccion, monto);
             debitRealizado = true; // Flag now indicates "Reservation Made"
 
-            int[] tiemposEspera = { 0, 800, 2000, 4000 };
-            boolean entregado = false;
-            String ultimoError = "";
-            int fallosConsecutivos = 0;
+            // --- FASE 4: CLEARING (Neteo) ---
+            log.info("Clearing: Enviando evento asíncrono de PAGO (DNS) con codigoReferencia={}",
+                    tx.getCodigoReferencia());
 
-            for (int intento = 0; intento < tiemposEspera.length; intento++) {
-                if (tiemposEspera[intento] > 0) {
-                    try {
-                        Thread.sleep(tiemposEspera[intento]);
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                    }
-                }
+            // Construir DTO explícitamente si es necesario, o usar el método helper si
+            // existiera.
+            // Aquí asumimos que MensajeriaServicio aceptará los parámetros o un DTO.
+            // Dado que publicarCompensacion acepta Object, creamos el DTO aquí.
+            com.bancario.nucleo.dto.external.RegistroOperacionDTO operacionDTO = new com.bancario.nucleo.dto.external.RegistroOperacionDTO();
+            operacionDTO.setIdInstruccion(idInstruccion);
+            operacionDTO.setIdInstruccionOriginal(null);
+            operacionDTO.setTipoOperacion("PAGO");
+            operacionDTO.setBicEmisor(bicOrigen);
+            operacionDTO.setBicReceptor(bicDestino);
+            operacionDTO.setMonto(monto);
+            operacionDTO.setCodigoReferencia(tx.getCodigoReferencia());
 
-                try {
-                    String urlWebhook = bancoDestinoInfo.getUrlDestino();
-                    log.info("Intento #{}: Enviando a {}", intento + 1, urlWebhook);
+            mensajeriaServicio.publicarCompensacion(operacionDTO);
 
-                    io.github.resilience4j.circuitbreaker.CircuitBreaker cb = circuitBreakerRegistry
-                            .circuitBreaker(bicDestino);
+            // --- FASE 2: NÚCLEO ASÍNCRONO (RabbitMQ) ---
+            log.info("Núcleo: Publicando mensaje a Exchange (RoutingKey={})", bicDestino);
+            mensajeriaServicio.publicarTransferencia(iso);
 
-                    try {
-                        cb.executeRunnable(() -> {
-                            HttpHeaders headers = new HttpHeaders();
-                            headers.setContentType(MediaType.APPLICATION_JSON);
-                            if (bancoDestinoInfo.getLlavePublica() != null) {
-                                headers.set("apikey", bancoDestinoInfo.getLlavePublica());
-                            }
-
-                            HttpEntity<MensajeISO> request = new HttpEntity<>(iso, headers);
-                            restTemplate.postForEntity(urlWebhook, request, String.class);
-                        });
-
-                        log.info("Webhook: Entregado exitosamente.");
-
-                        // NO MORE DIRECT CREDIT TO DESTINATION (Deferred)
-
-                        log.info("Clearing: Registrando operación PAGO en ciclo abierto");
-                        registrarOperacionCompensacion(bicOrigen, bicDestino, idInstruccion, monto, "PAGO",
-                                tx.getCodigoReferencia());
-
-                        entregado = true;
-                        log.info("Entrega: CONFIRMADA al Banco Destino. Finalizando Tx.");
-                        break;
-
-                    } catch (io.github.resilience4j.circuitbreaker.CallNotPermittedException e) {
-                        log.error("CIRCUIT BREAKER ABIERTO para {}. Transaccion rechazada inmediatamente.", bicDestino);
-                        throw new BusinessException(IsoError.MS03.getCodigo() + " - El Banco Destino " + bicDestino
-                                + " está NO DISPONIBLE (Circuit Breaker Activo). Intente más tarde.");
-                    }
-                } catch (BusinessException e) {
-                    throw e;
-                } catch (HttpClientErrorException e) {
-                    String errorBody = e.getResponseBodyAsString();
-                    String isoCode = normalizadorErrores.normalizarError(errorBody);
-                    log.error("Rechazo Normalizado del Banco Destino: {} -> {}", errorBody, isoCode);
-
-                    throw new BusinessException(isoCode + " - Transacción Rechazada por Banco Destino: " + errorBody);
-
-                } catch (org.springframework.web.client.HttpServerErrorException e) {
-                    log.error("Error 5xx del Banco Destino: {}", e.getStatusCode());
-                    reportarFalloAlDirectorio(bicDestino, "HTTP_5XX");
-
-                    String isoCode = IsoError.MS03.getCodigo();
-                    throw new BusinessException(
-                            isoCode + " - Banco Destino falló internamente (HTTP 5xx). Código: " + e.getStatusCode());
-
-                } catch (org.springframework.web.client.ResourceAccessException e) {
-                    log.error("Timeout/Conexión fallida con Banco Destino: {}", e.getMessage());
-                    reportarFalloAlDirectorio(bicDestino, "TIMEOUT_CONEXION");
-                    ultimoError = "Timeout/Conexión: " + e.getMessage();
-
-                } catch (Exception e) {
-                    log.warn("Fallo intento #{}: {}", intento + 1, e.getMessage());
-                    circuitBreakerRegistry.circuitBreaker(bicDestino).onError(0, java.util.concurrent.TimeUnit.SECONDS,
-                            e);
-                    ultimoError = e.getMessage();
-                }
-            }
-
-            if (entregado) {
-                tx.setEstado("COMPLETED");
-                guardarRespaldoIdempotencia(tx, "EXITO");
-            } else {
-                log.error("TIMEOUT: Se agotaron los reintentos. Último error: {}", ultimoError);
-                log.error("TIMEOUT: Se agotaron los reintentos. Último error: {}", ultimoError);
-                tx.setEstado("TIMEOUT");
-                transaccionRepositorio.save(tx);
-
-                throw new java.util.concurrent.TimeoutException("No se obtuvo respuesta del Banco Destino");
-            }
+            entregado = true;
+            tx.setEstado("COMPLETED");
+            guardarRespaldoIdempotencia(tx, "EXITO (ENVIADO A COLA)");
+            log.info("Tx UUID={} completada localmente y encolada para {}", idInstruccion, bicDestino);
 
         } catch (java.util.concurrent.TimeoutException e) {
             log.error("Transacción en estado PENDING por Timeout: {}", e.getMessage());

@@ -24,6 +24,7 @@ public class TransaccionMapper {
                 .codigoBicDestino(entidad.getCodigoBicDestino())
                 .estado(entidad.getEstado())
                 .fechaCreacion(entidad.getFechaCreacion())
+                .codigoReferencia(entidad.getCodigoReferencia())
                 .build();
     }
 
