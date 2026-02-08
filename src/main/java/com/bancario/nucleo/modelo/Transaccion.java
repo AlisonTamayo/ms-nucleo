@@ -79,7 +79,7 @@ public class Transaccion {
     }
 
     /**
-     * Genera un código de referencia bancario de 6 dígitos numéricos.
+     * Genera un código de referencia bancario de 6 dígitos numéricoxs.
      * Ejemplo: "847293"
      */
     public static String generarCodigoReferencia() {

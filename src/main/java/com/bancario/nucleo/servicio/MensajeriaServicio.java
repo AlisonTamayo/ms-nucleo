@@ -1,10 +1,10 @@
 package com.bancario.nucleo.servicio;
 
-import com.bancario.nucleo.config.RabbitConfig;
 import com.bancario.nucleo.dto.iso.MensajeISO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 @Slf4j
@@ -13,6 +13,9 @@ import org.springframework.stereotype.Service;
 public class MensajeriaServicio {
 
     private final RabbitTemplate rabbitTemplate;
+
+    @Value("${rabbitmq.exchange.transfers:ex.transfers.tx}")
+    private String exchangeName;
 
     public void publicarTransferencia(MensajeISO iso) {
         try {
@@ -27,7 +30,7 @@ public class MensajeriaServicio {
             // Publicar al Direct Exchange
             log.info("RabbitMQ: Publicando mensaje {} hacia Banco {}", iso.getHeader().getMessageId(), targetBankId);
 
-            rabbitTemplate.convertAndSend(RabbitConfig.EXCHANGE_NAME, targetBankId, iso);
+            rabbitTemplate.convertAndSend(exchangeName, targetBankId, iso);
 
             log.info("RabbitMQ: Publicación exitosa.");
 
