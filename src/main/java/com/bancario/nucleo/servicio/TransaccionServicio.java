@@ -33,6 +33,23 @@ import com.bancario.nucleo.dto.external.InstitucionDTO;
 import com.bancario.nucleo.dto.external.RegistroMovimientoRequest;
 import com.bancario.nucleo.dto.iso.MensajeISO;
 import com.bancario.nucleo.excepcion.BusinessException;
+import com.bancario.nucleo.excepcion.IsoError;
+import com.bancario.nucleo.repositorio.TransaccionRepositorio;
+import com.bancario.nucleo.repositorio.RespaldoIdempotenciaRepositorio; // Asumiendo nombre
+import com.bancario.nucleo.modelo.Transaccion;
+import com.bancario.nucleo.modelo.RespaldoIdempotencia;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
+import org.springframework.http.*;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.RestTemplate;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.util.*;
+import java.util.stream.Collectors; // Si se usa
+import com.bancario.nucleo.excepcion.BusinessException;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -842,26 +859,88 @@ public class TransaccionServicio {
         log.info("Iniciando validación de cuenta (Account Lookup) para Banco: {}", request.getBody().getTargetBankId());
 
         String targetBank = request.getBody().getTargetBankId();
-        // String account = request.getBody().getTargetAccountNumber(); // Variable
-        // local no usada si solo validamos banco por ahora
+        String targetAccount = request.getBody().getTargetAccountNumber(); // Recuperar cuenta del request
 
-        // 1. Validar que el banco existe
+        // 1. Validar que el banco existe y obtener su URL
         InstitucionDTO bancoDestino = validarBanco(targetBank, false);
+        String webhookUrl = bancoDestino.getUrlDestino();
 
-        // 2. Construir respuesta
-        com.bancario.nucleo.dto.AccountLookupResponseDTO response = new com.bancario.nucleo.dto.AccountLookupResponseDTO();
-        response.setStatus("SUCCESS");
+        // Ajuste de URL para estandarización si es necesaria
+        // Si la URL termina en base, agregamos el path estándar de recepción
+        if (webhookUrl != null && !webhookUrl.endsWith("/recepcion")
+                && !webhookUrl.contains("/api/core/transferencias")) {
+            // Fallback estándar si el directorio tiene solo el host
+            webhookUrl = webhookUrl.replaceAll("/$", "") + "/api/core/transferencias/recepcion";
+        }
 
-        com.bancario.nucleo.dto.AccountLookupResponseDTO.LookupData data = new com.bancario.nucleo.dto.AccountLookupResponseDTO.LookupData();
-        data.setExists(true);
-        data.setOwnerName("Usuario Validado (Switch)");
-        data.setCurrency("USD");
-        data.setStatus("ACTC"); // Account Connected
-        data.setMensaje("Validación exitosa en " + bancoDestino.getNombre());
-        data.setAccountName("Usuario Validado");
+        log.info("Enviando solicitud ACMT.023 a Banco {} [URL: {}]", targetBank, webhookUrl);
 
-        response.setData(data);
-        return response;
+        try {
+            // 2. Construir Payload ACMT.023 (JSON simplificado usando Map)
+            Map<String, Object> payload = new java.util.HashMap<>();
+
+            Map<String, Object> header = new java.util.HashMap<>();
+            header.put("messageNamespace", "acmt.023.001.02"); // Namespace ISO para Lookup
+            header.put("messageId", "LKP-" + UUID.randomUUID().toString());
+            header.put("originatingBankId", "SWITCH");
+            header.put("creationDateTime", LocalDateTime.now().toString());
+
+            Map<String, Object> body = new java.util.HashMap<>();
+            Map<String, Object> creditor = new java.util.HashMap<>();
+            creditor.put("accountId", targetAccount);
+            body.put("creditor", creditor);
+
+            payload.put("header", header);
+            payload.put("body", body);
+
+            // 3. Enviar POST al Banco
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            HttpEntity<Map<String, Object>> entity = new HttpEntity<>(payload, headers);
+
+            // Respuesta esperada: { status: "COMPLETED", data: { exists: true, ownerName:
+            // "Juan", ... } }
+            ResponseEntity<Map> responseEntity = restTemplate.postForEntity(webhookUrl, entity, Map.class);
+            Map<String, Object> responseBody = (Map<String, Object>) responseEntity.getBody();
+
+            if (responseBody == null) {
+                throw new BusinessException(IsoError.MS03.getCodigo() + " - Respuesta vacía del banco destino.");
+            }
+
+            String status = (String) responseBody.get("status");
+            if (!"COMPLETED".equals(status) && !"SUCCESS".equals(status)) {
+                throw new BusinessException(
+                        IsoError.AC01.getCodigo() + " - Cuenta no encontrada o error en banco destino.");
+            }
+
+            Map<String, Object> data = (Map<String, Object>) responseBody.get("data");
+            if (data == null || Boolean.FALSE.equals(data.get("exists"))) {
+                throw new BusinessException(IsoError.AC01.getCodigo() + " - La cuenta no existe en el banco destino.");
+            }
+
+            // 4. Mapear respuesta real
+            com.bancario.nucleo.dto.AccountLookupResponseDTO response = new com.bancario.nucleo.dto.AccountLookupResponseDTO();
+            response.setStatus("SUCCESS");
+
+            com.bancario.nucleo.dto.AccountLookupResponseDTO.LookupData lookupData = new com.bancario.nucleo.dto.AccountLookupResponseDTO.LookupData();
+            lookupData.setExists(true);
+            lookupData.setOwnerName((String) data.getOrDefault("ownerName", "Nombre Desconocido"));
+            lookupData.setCurrency((String) data.getOrDefault("currency", "USD"));
+            lookupData.setStatus("ACTC");
+            lookupData.setMensaje("Validación exitosa");
+            lookupData.setAccountName((String) data.getOrDefault("ownerName", "Cuenta Validada"));
+
+            response.setData(lookupData);
+            return response;
+
+        } catch (HttpClientErrorException.NotFound e) {
+            throw new BusinessException(IsoError.AC01.getCodigo() + " - Cuenta no encontrada en banco destino (404).");
+        } catch (Exception e) {
+            log.error("Error en Lookup Remoto a {}: {}", targetBank, e.getMessage());
+            // Fallback o Error: Decidimos lanzar error para no dar falsos positivos
+            throw new BusinessException(
+                    IsoError.MS03.getCodigo() + " - Error técnico validando cuenta externa: " + e.getMessage());
+        }
     }
 
 }
