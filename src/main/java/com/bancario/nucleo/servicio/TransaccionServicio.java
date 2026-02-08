@@ -15,6 +15,15 @@ import com.bancario.nucleo.modelo.RespaldoIdempotencia;
 import com.bancario.nucleo.modelo.IsoError;
 import com.bancario.nucleo.mapper.TransaccionMapper;
 
+import org.springframework.http.ResponseEntity;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import java.util.Map;
+import java.util.HashMap;
+import java.util.UUID;
+import java.time.LocalDateTime;
+
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.beans.factory.annotation.Value;
@@ -33,21 +42,7 @@ import com.bancario.nucleo.dto.external.InstitucionDTO;
 import com.bancario.nucleo.dto.external.RegistroMovimientoRequest;
 import com.bancario.nucleo.dto.iso.MensajeISO;
 import com.bancario.nucleo.excepcion.BusinessException;
-import com.bancario.nucleo.excepcion.IsoError;
-import com.bancario.nucleo.repositorio.TransaccionRepositorio;
-import com.bancario.nucleo.repositorio.RespaldoIdempotenciaRepositorio; // Asumiendo nombre
-import com.bancario.nucleo.modelo.Transaccion;
-import com.bancario.nucleo.modelo.RespaldoIdempotencia;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Sort;
-import org.springframework.http.*;
-import org.springframework.web.client.HttpClientErrorException;
-import org.springframework.web.client.RestTemplate;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.math.BigDecimal;
-import java.time.LocalDateTime;
-import java.util.*;
+
 import java.util.stream.Collectors; // Si se usa
 import com.bancario.nucleo.excepcion.BusinessException;
 
