@@ -30,10 +30,10 @@ public class Transaccion {
     @Column(name = "moneda", length = 3, nullable = false)
     private String moneda;
 
-    @Column(name = "codigoBicOrigen", length = 20, nullable = false)
+    @Column(name = "bicEmisor", length = 20, nullable = false)
     private String codigoBicOrigen;
 
-    @Column(name = "codigoBicDestino", length = 20, nullable = false)
+    @Column(name = "bicReceptor", length = 20, nullable = false)
     private String codigoBicDestino;
 
     @Column(name = "estado", length = 20, nullable = false)
