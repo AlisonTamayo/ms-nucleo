@@ -66,8 +66,36 @@ public class TransaccionServicio {
     @Value("${service.directorio.url:http://ms-directorio:8081}")
     private String directorioUrl;
 
-    @Value("${service.contabilidad.url:http://ms-contabilidad:8083}")
+    @Value("${service.contabilidad.url:http://ms-contabilidad:8080}") // Fixed port to 8080 based on other files
     private String contabilidadUrl;
+
+    // --- BFF METHODS FOR FRONTEND ---
+
+    public InstitucionDTO[] listarInstituciones() {
+        log.info("BFF: Proxying List Institutions to MS-Directorio");
+        String url = directorioUrl + "/api/v1/instituciones";
+        return restTemplate.getForObject(url, InstitucionDTO[].class);
+    }
+
+    public InstitucionDTO crearInstitucion(InstitucionDTO institucion) {
+        log.info("BFF: Proxying Create Institution to MS-Directorio");
+        String url = directorioUrl + "/api/v1/instituciones";
+        return restTemplate.postForObject(url, institucion, InstitucionDTO.class);
+    }
+
+    public Object crearCuentaTecnica(Map<String, Object> request) {
+        log.info("BFF: Proxying Create Ledger Account to MS-Contabilidad");
+        String url = contabilidadUrl + "/api/v1/ledger/cuentas";
+        return restTemplate.postForObject(url, request, Object.class);
+    }
+
+    public Object fundRecharge(Map<String, Object> request) {
+        log.info("BFF: Proxying Fund Recharge to MS-Contabilidad");
+        String url = contabilidadUrl + "/api/v1/funding/recharge";
+        return restTemplate.postForObject(url, request, Object.class);
+    }
+
+    // --- END BFF METHODS ---
 
     @Value("${service.compensacion.url:http://ms-compensacion:8084}")
     private String compensacionUrl;

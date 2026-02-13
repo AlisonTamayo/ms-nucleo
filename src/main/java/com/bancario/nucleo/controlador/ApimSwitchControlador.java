@@ -142,4 +142,52 @@ public class ApimSwitchControlador {
 
         return ResponseEntity.ok(response);
     }
+
+    /**
+     * GET /api/v2/switch/admin/instituciones
+     * Endpoint BFF para listar bancos.
+     * Proxy hacia ms-directorio.
+     */
+    @GetMapping("/admin/instituciones")
+    @Operation(summary = "Listar Bancos (BFF)", description = "Proxy a Directorio para listar instituciones")
+    public ResponseEntity<?> listarInstituciones() {
+        return ResponseEntity.ok(transaccionServicio.listarInstituciones());
+    }
+
+    /**
+     * POST /api/v2/switch/admin/instituciones
+     * Endpoint BFF para crear bancos desde el Panel Administrativo.
+     * Proxy hacia ms-directorio.
+     */
+    @PostMapping("/admin/instituciones")
+    @Operation(summary = "Crear Banco (BFF)", description = "Proxy a Directorio para crear instituciones")
+    public ResponseEntity<?> crearInstitucion(
+            @RequestBody com.bancario.nucleo.dto.external.InstitucionDTO institucion) {
+        log.info("[BFF] Creando institución: {}", institucion.getCodigoBic());
+        return ResponseEntity.ok(transaccionServicio.crearInstitucion(institucion));
+    }
+
+    /**
+     * POST /api/v2/switch/admin/ledger/cuentas
+     * Endpoint BFF para crear cuentas técnicas.
+     * Proxy hacia ms-contabilidad.
+     */
+    @PostMapping("/admin/ledger/cuentas")
+    @Operation(summary = "Crear Cuenta Técnica (BFF)", description = "Proxy a Contabilidad para inicializar cuentas")
+    public ResponseEntity<?> crearCuentaTecnica(@RequestBody java.util.Map<String, Object> request) {
+        log.info("[BFF] Creando cuenta técnica para: {}", request.get("codigoBic"));
+        return ResponseEntity.ok(transaccionServicio.crearCuentaTecnica(request));
+    }
+
+    /**
+     * POST /api/v2/switch/admin/funding/recharge
+     * Endpoint BFF para fondear cuentas.
+     * Proxy hacia ms-contabilidad.
+     */
+    @PostMapping("/admin/funding/recharge")
+    @Operation(summary = "Fondear Cuenta (BFF)", description = "Proxy a Contabilidad para recargas")
+    public ResponseEntity<?> recargarFondos(@RequestBody java.util.Map<String, Object> request) {
+        log.info("[BFF] Recargando fondos para: {}", request.get("bic"));
+        return ResponseEntity.ok(transaccionServicio.fundRecharge(request));
+    }
 }
