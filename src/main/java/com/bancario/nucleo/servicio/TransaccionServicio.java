@@ -890,10 +890,22 @@ public class TransaccionServicio {
 
         // Ajuste de URL para estandarización si es necesaria
         // Si la URL termina en base, agregamos el path estándar de recepción
-        if (webhookUrl != null && !webhookUrl.endsWith("/recepcion")
-                && !webhookUrl.contains("/api/core/transferencias")) {
-            // Fallback estándar si el directorio tiene solo el host
-            webhookUrl = webhookUrl.replaceAll("/$", "") + "/api/core/transferencias/recepcion";
+        // Ajuste de URL para Account Lookup (Simetría con API del Switch)
+        if (webhookUrl != null) {
+            // Caso APIM v2 switch/transfers -> switch/account-lookup
+            if (webhookUrl.endsWith("/transfers")) {
+                webhookUrl = webhookUrl.replace("/transfers", "/account-lookup");
+            }
+            // Caso Core Bancario Legacy (Soporte con y sin tilde)
+            else if (webhookUrl.contains("/api/core/transferencias/recepcion")
+                    || webhookUrl.contains("/api/core/transferencias/recepción")) {
+                webhookUrl = webhookUrl.replaceAll("/api/core/transferencias/recepci(o|ó)n",
+                        "/api/core/cuentas/validacion");
+            }
+            // Fallback genérico
+            else {
+                webhookUrl = webhookUrl.replaceAll("/$", "") + "/api/core/cuentas/validacion";
+            }
         }
 
         log.info("Enviando solicitud ACMT.023 a Banco {} [URL: {}]", targetBank, webhookUrl);
